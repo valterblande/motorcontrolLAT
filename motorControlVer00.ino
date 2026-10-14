@@ -1,4 +1,6 @@
+//Firmware para controle da placa de controle de velocidade LAT Ver00 em 09/10/2026
 #define SYNC 6
+#define OCPROT A1
 #define LED 12
 #define MOTOR 4
 #define WP 5
@@ -19,6 +21,8 @@
 
 bool syncON = false;
 int nPulse=0;
+int ocPulse=0;
+bool ocFlag=false;
 
 
 void setup() {
@@ -37,10 +41,12 @@ void setup() {
   pinMode(LED, OUTPUT);
   pinMode(MOTOR, OUTPUT);
   pinMode(SYNC,INPUT);
+  pinMode(OCPROT,INPUT);
 
   digitalWrite(MOTOR,LOW);
 
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(SYNC), isr_syncHandle, FALLING);
+  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(OCPROT), isr_ocprotHandle, FALLING);
 }
 
 // the loop function runs over and over again forever
@@ -56,17 +62,31 @@ void loop() {
 
 }
 
+void isr_ocprotHandle()
+{
+  ocPulse++;
+
+  if(ocPulse>5)
+  ocFlag=true;
+  
+
+}
+
 void isr_syncHandle()
 {
+  detachPinChangeInterrupt(digitalPinToPinChangeInterrupt(SYNC));
+  
   nPulse++;
 
-  if(nPulse==60)
+  if(nPulse==120)
   {
     digitalWrite(LED,HIGH);
     syncON=true;
+    ocPulse=0;
+    ocFlag=false;
   }
 
-  if(nPulse>70)
+  if(nPulse>130)
   {
     nPulse=0;
     digitalWrite(LED,LOW);
@@ -89,7 +109,8 @@ void isr_syncHandle()
 
 ISR(TIMER0_COMPA_vect)
 {
-
+  
+  if(!ocFlag)
   digitalWrite(MOTOR,1);
   
 
@@ -99,6 +120,7 @@ ISR(TIMER0_COMPB_vect)
 {
   digitalWrite(MOTOR,0);
   TIMSK0 &= 0b11111001; //desabilita interrupção CMPA e CMPB
+  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(SYNC), isr_syncHandle, FALLING);
 
 }
 
