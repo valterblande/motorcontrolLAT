@@ -1,6 +1,9 @@
 //Firmware para controle da placa de controle de velocidade LAT Ver00 em 09/10/2026
+//Adição de proteção contra curtos com alarme sonoro (BEEP)
+
 #define SYNC 6
 #define OCPROT A1
+#define BEEP 2
 #define LED 12
 #define MOTOR 4
 #define WP 5
@@ -42,8 +45,10 @@ void setup() {
   pinMode(MOTOR, OUTPUT);
   pinMode(SYNC,INPUT);
   pinMode(OCPROT,INPUT);
+  pinMode(BEEP,OUTPUT);
 
   digitalWrite(MOTOR,LOW);
+  digitalWrite(BEEP,LOW);
 
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(SYNC), isr_syncHandle, FALLING);
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(OCPROT), isr_ocprotHandle, FALLING);
@@ -81,15 +86,24 @@ void isr_syncHandle()
   if(nPulse==120)
   {
     digitalWrite(LED,HIGH);
+
+    if(ocFlag)
+    digitalWrite(BEEP,HIGH);
+
     syncON=true;
-    ocPulse=0;
-    ocFlag=false;
+    
   }
 
   if(nPulse>130)
   {
     nPulse=0;
     digitalWrite(LED,LOW);
+
+    if(ocFlag)
+    digitalWrite(BEEP,LOW);
+
+    ocPulse=0;
+    ocFlag=false;
   }
   
   
@@ -136,7 +150,7 @@ double potUpdate()
   byte compVal=0; 
 
   pot=(double)analogRead(0);
-  pot/=1023;
+  pot/=512;//Max = 2.5V = 512 - Limite máximo de 90% colocando 612
   
   //Corrige angulo conforme Vrms ou Vmedia
   alpha=findAlpha(pot, false);//true = Vrms, false = Vmedia
@@ -148,7 +162,8 @@ double potUpdate()
   
   aux=pot*TOPCOUNT;
   
-  compVal=TOPCOUNT- (byte)aux;
+  //compVal=TOPCOUNT- (byte)aux;//Invertido
+  compVal=(byte)aux;
 
   if(compVal==0)
   compVal=2;
