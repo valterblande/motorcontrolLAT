@@ -30,15 +30,18 @@
 #define ParEndSensor 0
 #define ParDelayModbus 1
 #define ParEepromCheck 2
-#define ParPulsoRede 3
-#define ParPotVal 4
-#define ParCalcVcarga 5
-#define ParSensorFC1 6
-#define ParSensorFC2 7
-#define ParVelMotor 8
-#define ParTriacSW 9
-#define ParOcPulse 10
-#define ParOcFlag 11
+#define ParCalcVcarga 3
+#define ParTriacSW 4
+#define ParManDig 5
+#define ParPotDigVal 6
+#define ParPulsoRede 7
+#define ParPotVal 8
+#define ParSensorFC1 9
+#define ParSensorFC2 10
+#define ParVelMotor 11
+#define ParOcPulse 12
+#define ParOcFlag 13
+
 
 
 #include <PinChangeInterrupt.h>
@@ -340,6 +343,8 @@ RX485;
 //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 void WriteSingleRegister(void){  
+
+bool gravEsp=false;
   
 EndIni=RxModbus[2];
 EndIni<<=8;
@@ -350,23 +355,35 @@ ValueRegister<<=8;
 ValueRegister+=RxModbus[5]; 
 
 
+if(EndIni>6)
+gravEsp=true;
 
-// if(EndIni==PARHORARIO)
-// {
-//   flagRotHor=true;
-//   nVoltasHor=ValueRegister;
-
-// }
+if(EndIni==ParPotDigVal)
+{
+  gravEsp=true;
+  if(ValueRegister<513)
+  {
+  Mapa[ParPotDigVal]=ValueRegister;
+  GravaParam(ParPotDigVal, ValueRegister);
+  }
+}
 
 
 
 if(EndIni==ParDelayModbus)
 {
+  gravEsp=true;
   if(ValueRegister<100)
   {
   GravaParam(ParDelayModbus,ValueRegister);
   Mapa[ParDelayModbus]=ValueRegister;
   }
+}
+
+if(!gravEsp)
+{
+  GravaParam(EndIni,ValueRegister);
+  Mapa[EndIni]=ValueRegister;
 }
 
 TX485;
@@ -425,8 +442,15 @@ void GravaMapaDefault(void){
   
   GravaParam(ParEndSensor,ENDPADRAO);
   GravaParam(ParEepromCheck,0xAAAA);
-  GravaParam(ParDelayModbus,10);  
-    
+  GravaParam(ParDelayModbus,10);
+  GravaParam(ParCalcVcarga,0);//Vmedia
+  GravaParam(ParTriacSW,1);//Ligada
+  GravaParam(ParManDig,1);//Manual
+  GravaParam(ParPotDigVal,256);//0 a 512  
+  
+  //Zera variaveis de leitura na EEPROM
+  for(int j=7;j<30;j++)
+  GravaParam(j,0);
   
 }
 
@@ -473,6 +497,7 @@ void isr_syncHandle()
 
     ocPulse=0;
     ocFlag=false;
+    Mapa[ParOcFlag]=0;
   }
   
   
@@ -493,7 +518,7 @@ void isr_syncHandle()
 ISR(TIMER0_COMPA_vect)
 {
   
-  if(!ocFlag)
+  if(!ocFlag&&Mapa[ParTriacSW]==1)
   digitalWrite(MOTOR,1);
   
 
@@ -520,11 +545,20 @@ double potUpdate()
 
   byte compVal=0; 
 
+  //Controle de potência por potenciômetro ou via digital (ModBus)
+  if(Mapa[ParManDig]==1)
   pot=(double)analogRead(0);
+  else
+  pot=(double)Mapa[ParPotDigVal];
+
   pot/=512;//Max = 2.5V = 512 - Limite máximo de 90% colocando 612
   
   //Corrige angulo conforme Vrms ou Vmedia
+  if(Mapa[ParCalcVcarga]==0)
   alpha=findAlpha(pot, false);//true = Vrms, false = Vmedia
+  else
+  alpha=findAlpha(pot, true);//true = Vrms, false = Vmedia
+
   td = disparoCalc(alpha);
   
   double potPorcento=0;
