@@ -1,6 +1,9 @@
+#include <EEPROM.h>
+#include <avr/interrupt.h>
+#include <avr/io.h>
 //Firmware para controle da placa de controle de velocidade LAT Ver00 em 09/10/2026
 //Adição de proteção contra curtos com alarme sonoro (BEEP)
-
+#define ENDPADRAO 1
 #define SYNC 6
 #define OCPROT A1
 #define BEEP 2
@@ -23,8 +26,45 @@
 #define TX485 digitalWrite(TXRX,HIGH)
 #define RX485 digitalWrite(TXRX,LOW)
 
+//Mapa Memoria ModBus
+#define ParEndSensor 0
+#define ParDelayModbus 1
+#define ParEepromCheck 2
+#define ParPulsoRede 3
+#define ParPotVal 4
+#define ParCalcVcarga 5
+#define ParSensorFC1 6
+#define ParSensorFC2 7
+#define ParVelMotor 8
+#define ParTriacSW 9
+#define ParOcPulse 10
+#define ParOcFlag 11
+
+
 #include <PinChangeInterrupt.h>
 
+//Variáveis do ModBus
+volatile unsigned int Mapa[30];
+unsigned int CRClow, CRChigh;
+unsigned int RxModbus[8];
+unsigned int RspModbus[50];
+unsigned int Rxi=0;
+volatile int RxTime=0;
+unsigned int RxPisca=1;
+volatile char TxR=0;
+volatile char CmdModbusIn=0;
+
+//Variáveis ReadHoldingRegisters
+unsigned int EndIni,QtdReg;
+
+//Variáveis WriteSingleRegister
+unsigned int ValueRegister;
+unsigned int PermiteGravar=1;
+
+//Variáveis de tempo
+volatile unsigned long Ms=0;
+
+//Variaveis Controle de Potencia
 bool syncON = false;
 int nPulse=0;
 int ocPulse=0;
@@ -44,6 +84,8 @@ void setup() {
   OCR0B = 125;//Comparador B em 80
   //TIMSK0 = 0b00000110;//Habilita interrupção nas comparações A e B
 
+  configSerialModbus();
+
   pinMode(LED, OUTPUT);
   pinMode(MOTOR, OUTPUT);
   pinMode(SYNC,INPUT);
@@ -56,6 +98,11 @@ void setup() {
 
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(SYNC), isr_syncHandle, FALLING);
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(OCPROT), isr_ocprotHandle, FALLING);
+
+  
+  checkModBusMap();
+
+  RX485;//Define direção para Receber comando
 
   beep(1);
 
@@ -72,15 +119,327 @@ void loop() {
     syncON=false;
   }
 
+  if(CmdModbusIn==1)
+  RecebeCmdModbus();
+  
+  Atraso(100);
+
 
 }
+
+void Atraso(unsigned int Ta){
+   
+Ms=0;
+  
+while(Ms<Ta){} 
+  
+  
+}
+
+//Ticking 1 ms
+ISR(TIMER2_COMPB_vect)
+{
+
+RxTime++;//Controla tempo entre caracteres Modbus
+Ms++;
+
+  
+}
+
+//Interrupção para receber comandos Modbus
+ISR(USART_RX_vect)
+{
+
+//Limpa array se não for comando inteiro de 8 bytes  
+if((Rxi>0)&&(RxTime>50))
+Rxi=0;
+
+RxModbus[Rxi]=UDR0;
+Rxi++;
+
+if(Rxi==8){
+CmdModbusIn=1;
+Rxi=0;
+}
+ 
+RxTime=0;
+
+}
+
+void configSerialModbus()
+{
+
+   //Ticking 1 ms
+  TCCR2A=0;
+  TCCR2A |= 0b00000011;
+  TCCR2B=0;
+  TCCR2B |= 0b00001100;//divide clock em 64
+  TIMSK2 = 0;
+  TIMSK2 |= 0b00000100;
+  OCR2A=250;
+  OCR2B=125;
+  //Fim 
+
+  //Configuração da porta serial 8 bits 9600
+  UCSR0B |= 0b10011000; //Habilita Int.,Rx e Tx
+  UBRR0L = 103; //BaudRate de 9600
+  UBRR0H = 0;   //BaudRate de 9600
+  pinMode(0,INPUT);
+  pinMode(1,OUTPUT);
+
+}
+
+void checkModBusMap()
+{
+  //Verifica se existe mapa na EEPROM
+  Mapa[ParEepromCheck]=LeParam(ParEepromCheck);
+  
+  if(Mapa[ParEepromCheck]==0xAAAA)
+    {
+    
+    for(int i=0;i<30;i++)
+    Mapa[i]=LeParam(i); 
+    
+    }
+  else 
+    {
+    GravaMapaDefault();
+    
+    for(int i=0;i<30;i++)
+    Mapa[i]=LeParam(i);
+    
+    }
+}
+
+//%%%%%%%%%%%%%%%%%%%%%%%%%%     Rotina para cálculo do CRC   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+void CRC16(unsigned int index,unsigned int *aponta){
+
+  unsigned int CRC=0xFFFF, poli=0xA001,LSB;
+
+while(index){
+
+CRC=CRC^*aponta; //XOR entre CRC e byte recebido
+
+for(int i=0;i<8;i++){
+LSB=CRC & 0x0001; //Pega valor de LSB
+CRC=CRC>>1; //Desloca CRC um bit a direita;
+CRC=CRC & 0x7FFF; //Zera MSB
+if(LSB==1)
+CRC=CRC^poli;}
+
+aponta++; //aponta para o proximo byte
+index--; //decrementa indice
+}
+
+//divide em dois bytes
+CRClow=CRC & 0x00FF; 
+CRChigh=CRC & 0xFF00;
+CRChigh=CRChigh>>8;
+CRChigh=CRChigh & 0x00FF;
+
+}
+
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%  Envia dados pela serial %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+void TxEnvia(unsigned int OutByte){
+  
+  unsigned char DataTx;
+  
+  DataTx=(unsigned char)OutByte;
+  
+TxR=0;
+
+while(TxR==0){
+TxR = UCSR0A & 0b00100000;
+}
+
+UDR0=DataTx; 
+
+ 
+}
+
+
+void RecebeCmdModbus(void){
+
+ 
+if(RxModbus[0]==Mapa[ParEndSensor]){
+
+  
+CRC16(6,RxModbus);
+
+if((RxModbus[6]==CRClow)&&(RxModbus[7]==CRChigh)){
+  
+  
+if(RxModbus[1]==3)
+ReadHoldingRegister();
+
+if(RxModbus[1]==6)
+WriteSingleRegister();
+  
+  
+}else Atraso(10); //Para ver o Led piscar
+
+}else Atraso(10); //Para ver o Led piscar
+
+CmdModbusIn=0;
+
+
+}
+
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+void ReadHoldingRegister(void){
+
+
+EndIni=RxModbus[2];
+EndIni<<=8;
+EndIni+=RxModbus[3]; 
+
+QtdReg=RxModbus[4];
+QtdReg<<=8;
+QtdReg+=RxModbus[5];  
+
+RspModbus[0]=RxModbus[0];
+RspModbus[1]=RxModbus[1];
+RspModbus[2]=2*QtdReg;
+
+int i=0,j=0;
+
+for(i=3, j=0;j<QtdReg;i+=2,j++){
+  
+RspModbus[i]=Mapa[EndIni+j];
+
+RspModbus[i]=RspModbus[i] & 0xFF00;
+RspModbus[i]=RspModbus[i]>>8;
+RspModbus[i+1]=Mapa[EndIni+j] & 0x00FF; 
+  
+}
+
+CRC16(3+2*QtdReg,RspModbus);
+
+RspModbus[3+2*QtdReg]=CRClow;
+RspModbus[3+2*QtdReg+1]=CRChigh;
+
+TX485;
+
+Atraso(Mapa[ParDelayModbus]);
+
+UCSR0B &= 0b11101111;  //Desativa Rx
+
+for(int i=0;i<3+2*QtdReg+2;i++) 
+TxEnvia(RspModbus[i]);
+
+Atraso(5);
+
+UCSR0B |= 0b00010000;  //Ativa Rx
+
+RX485;
+
+}
+
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+void WriteSingleRegister(void){  
+  
+EndIni=RxModbus[2];
+EndIni<<=8;
+EndIni+=RxModbus[3];   
+ 
+ValueRegister=RxModbus[4];
+ValueRegister<<=8;
+ValueRegister+=RxModbus[5]; 
+
+
+
+// if(EndIni==PARHORARIO)
+// {
+//   flagRotHor=true;
+//   nVoltasHor=ValueRegister;
+
+// }
+
+
+
+if(EndIni==ParDelayModbus)
+{
+  if(ValueRegister<100)
+  {
+  GravaParam(ParDelayModbus,ValueRegister);
+  Mapa[ParDelayModbus]=ValueRegister;
+  }
+}
+
+TX485;
+Atraso(Mapa[ParDelayModbus]);
+
+UCSR0B &= 0b11101111;  //Desativa Rx
+
+for(int i=0;i<8;i++) 
+TxEnvia(RxModbus[i]);//Resposta é a mesma do pedido
+
+Atraso(5);
+
+UCSR0B |= 0b00010000;  //Ativa Rx
+
+RX485;
+  
+}
+
+//%%%%%%%%%%%%%%%%%%%%%%% Grava e Le na EEPROM %%%%%%%%%%%%%%%%%%%%%%
+void GravaParam(unsigned int End,unsigned int Par){
+
+unsigned int ParH=0;
+unsigned int ParL=0;
+
+ParH = Par & 0xFF00;
+ParH >>=8;
+ParL = Par & 0x00FF;
+
+EEPROM.write(2*End,ParH);
+EEPROM.write(2*End+1,ParL);
+  
+}
+
+
+unsigned int LeParam(unsigned int EndParam){
+  
+
+unsigned int Lido;
+
+unsigned int ParH=0;
+unsigned int ParL=0;
+
+ParH=EEPROM.read(2*EndParam);
+ParH<<=8;
+ParL=EEPROM.read(2*EndParam+1);
+  
+Lido=ParH+ParL; 
+ 
+ 
+ return Lido;  
+  
+}
+
+
+void GravaMapaDefault(void){
+  
+  GravaParam(ParEndSensor,ENDPADRAO);
+  GravaParam(ParEepromCheck,0xAAAA);
+  GravaParam(ParDelayModbus,10);  
+    
+  
+}
+
+//########################################  Rotinas de controle de Potencia
 
 void isr_ocprotHandle()
 {
   ocPulse++;
 
+  Mapa[ParOcPulse]=(unsigned int)ocPulse;
+
   if(ocPulse>5)
-  ocFlag=true;
+  {ocFlag=true;Mapa[ParOcFlag]=1;}
   
 
 }
@@ -88,6 +447,8 @@ void isr_ocprotHandle()
 void isr_syncHandle()
 {
   detachPinChangeInterrupt(digitalPinToPinChangeInterrupt(SYNC));
+
+  Mapa[ParPulsoRede]=1;
   
   nPulse++;
 
@@ -141,6 +502,8 @@ ISR(TIMER0_COMPA_vect)
 ISR(TIMER0_COMPB_vect)
 {
   digitalWrite(MOTOR,0);
+  Mapa[ParPulsoRede]=0;
+
   TIMSK0 &= 0b11111001; //desabilita interrupção CMPA e CMPB
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(SYNC), isr_syncHandle, FALLING);
 
@@ -163,6 +526,10 @@ double potUpdate()
   //Corrige angulo conforme Vrms ou Vmedia
   alpha=findAlpha(pot, false);//true = Vrms, false = Vmedia
   td = disparoCalc(alpha);
+  
+  double potPorcento=0;
+  potPorcento=pot*100;
+  Mapa[ParPotVal]=(unsigned int)potPorcento;
 
   pot=(double)td;
   pot/=TMEIAONDA;
