@@ -4,6 +4,7 @@
 #define SYNC 6
 #define OCPROT A1
 #define BEEP 2
+#define TXRX 3
 #define LED 12
 #define MOTOR 4
 #define WP 5
@@ -19,6 +20,8 @@
 #define LEDOFF digitalWrite(LED,LOW)
 #define MOTORON digitalWrite(MOTOR,HIGH)
 #define MOTOROFF digitalWrite(MOTOR,LOW)
+#define TX485 digitalWrite(TXRX,HIGH)
+#define RX485 digitalWrite(TXRX,LOW)
 
 #include <PinChangeInterrupt.h>
 
@@ -29,7 +32,7 @@ bool ocFlag=false;
 
 
 void setup() {
-
+  
   TCCR0A = 0; // Clear normal/PWM defaults
   TCCR0B = 0; // Stop timer
   TCNT0  = 0; // Clear counter
@@ -46,12 +49,17 @@ void setup() {
   pinMode(SYNC,INPUT);
   pinMode(OCPROT,INPUT);
   pinMode(BEEP,OUTPUT);
+  pinMode(TXRX,OUTPUT);
 
   digitalWrite(MOTOR,LOW);
   digitalWrite(BEEP,LOW);
 
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(SYNC), isr_syncHandle, FALLING);
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(OCPROT), isr_ocprotHandle, FALLING);
+
+  beep(1);
+
+
 }
 
 // the loop function runs over and over again forever
@@ -247,6 +255,21 @@ unsigned int disparoCalc(double alpha)
   double aux = 0;
   aux=  (alpha/180)*TMEIAONDA;
   return (unsigned int)aux;
+}
+
+void beep(int n)
+{
+  int i=0;
+  long j=0;
+
+  for(i=0;i<n;i++)
+  {
+    digitalWrite(BEEP,HIGH);
+    for(j=0;j<100000;j++){asm volatile("nop");}
+    digitalWrite(BEEP,LOW);
+    for(j=0;j<200000;j++){asm volatile("nop");}
+  }
+
 }
 
 
