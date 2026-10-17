@@ -1,15 +1,21 @@
+//Firmware para controle da placa de controle de velocidade LAT Ver00 em 09/10/2026
+//Adição de proteção contra curtos com alarme sonoro (BEEP)
+//Adicionado ModBus com integração do sistema
+//Adicionado medição de rpm e fins de curso
 #include <EEPROM.h>
 #include <avr/interrupt.h>
 #include <avr/io.h>
-//Firmware para controle da placa de controle de velocidade LAT Ver00 em 09/10/2026
-//Adição de proteção contra curtos com alarme sonoro (BEEP)
 #define ENDPADRAO 1
+#define ENDWRITEMAX 7
 #define SYNC 6
 #define OCPROT A1
 #define BEEP 2
 #define TXRX 3
 #define LED 12
 #define MOTOR 4
+#define ROTSENS 8
+#define FC1 5
+#define FC2 7
 #define WP 5
 #define VELMAX 1.0
 #define VELMIN 0.2
@@ -34,13 +40,15 @@
 #define ParTriacSW 4
 #define ParManDig 5
 #define ParPotDigVal 6
-#define ParPulsoRede 7
-#define ParPotVal 8
-#define ParSensorFC1 9
-#define ParSensorFC2 10
-#define ParVelMotor 11
-#define ParOcPulse 12
-#define ParOcFlag 13
+#define ParOcFlagAutClear 7
+#define ParPulsoRede 8
+#define ParPotVal 9
+#define ParSensorFC1 10
+#define ParSensorFC2 11
+#define ParVelMotor 12
+#define ParOcPulse 13
+#define ParOcFlag 14
+
 
 
 
@@ -73,6 +81,11 @@ int nPulse=0;
 int ocPulse=0;
 bool ocFlag=false;
 
+//variaveis do sensor de rotacao
+bool rotSensToggle=false;
+long rotSensStamp=0;
+long timeStampMs=0;
+
 
 void setup() {
   
@@ -95,12 +108,16 @@ void setup() {
   pinMode(OCPROT,INPUT);
   pinMode(BEEP,OUTPUT);
   pinMode(TXRX,OUTPUT);
+  pinMode(ROTSENS,INPUT);
+  pinMode(FC1,INPUT_PULLUP);
+  pinMode(FC2,INPUT_PULLUP);
 
   digitalWrite(MOTOR,LOW);
   digitalWrite(BEEP,LOW);
 
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(SYNC), isr_syncHandle, FALLING);
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(OCPROT), isr_ocprotHandle, FALLING);
+  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(ROTSENS), isr_rotSensHandle, FALLING);
 
   
   checkModBusMap();
@@ -125,6 +142,8 @@ void loop() {
   if(CmdModbusIn==1)
   RecebeCmdModbus();
   
+  fcsUpdate();
+  
   Atraso(100);
 
 
@@ -145,6 +164,10 @@ ISR(TIMER2_COMPB_vect)
 
 RxTime++;//Controla tempo entre caracteres Modbus
 Ms++;
+timeStampMs++;
+
+if(timeStampMs>60000)
+Mapa[ParVelMotor]=0;
 
   
 }
@@ -355,7 +378,7 @@ ValueRegister<<=8;
 ValueRegister+=RxModbus[5]; 
 
 
-if(EndIni>6)
+if(EndIni>ENDWRITEMAX)
 gravEsp=true;
 
 if(EndIni==ParPotDigVal)
@@ -447,14 +470,30 @@ void GravaMapaDefault(void){
   GravaParam(ParTriacSW,1);//Ligada
   GravaParam(ParManDig,1);//Manual
   GravaParam(ParPotDigVal,256);//0 a 512  
+  GravaParam(ParOcFlagAutClear,1);//1 - Clear Auto 
   
   //Zera variaveis de leitura na EEPROM
-  for(int j=7;j<30;j++)
+  for(int j=ENDWRITEMAX+1;j<30;j++)
   GravaParam(j,0);
   
 }
 
-//########################################  Rotinas de controle de Potencia
+//########################################  Rotinas de controle de Potencia  
+
+void isr_rotSensHandle()
+{
+  rotSensToggle^=1;
+
+  if(rotSensToggle)
+  timeStampMs=0;
+  else
+  {
+    double rpmCalc=0;
+    rotSensStamp=timeStampMs;
+    rpmCalc=60000/rotSensStamp;
+    Mapa[ParVelMotor]=(unsigned int)rpmCalc;
+  }
+}
 
 void isr_ocprotHandle()
 {
@@ -494,10 +533,13 @@ void isr_syncHandle()
 
     if(ocFlag)
     digitalWrite(BEEP,LOW);
-
-    ocPulse=0;
-    ocFlag=false;
-    Mapa[ParOcFlag]=0;
+    
+    if(Mapa[ParOcFlagAutClear]==1)
+    {
+      ocPulse=0;
+      ocFlag=false;
+      Mapa[ParOcFlag]=0;
+    }
   }
   
   
@@ -535,6 +577,19 @@ ISR(TIMER0_COMPB_vect)
 }
 
 //###########################################  Rotina de atualização conforme posição do POT #########################
+void fcsUpdate()
+{
+  if(!digitalRead(FC1))
+  Mapa[ParSensorFC1]=1;
+  else
+  Mapa[ParSensorFC1]=0;
+
+  if(!digitalRead(FC2))
+  Mapa[ParSensorFC2]=1;
+  else
+  Mapa[ParSensorFC2]=0;
+}
+
 double potUpdate()
 {
 
