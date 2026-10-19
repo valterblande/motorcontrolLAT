@@ -6,7 +6,7 @@
 #include <avr/interrupt.h>
 #include <avr/io.h>
 #define ENDPADRAO 1
-#define ENDWRITEMAX 7
+#define ENDWRITEMAX 8
 #define SYNC 6
 #define OCPROT A1
 #define BEEP 2
@@ -41,13 +41,14 @@
 #define ParManDig 5
 #define ParPotDigVal 6
 #define ParOcFlagAutClear 7
-#define ParPulsoRede 8
-#define ParPotVal 9
-#define ParSensorFC1 10
-#define ParSensorFC2 11
-#define ParVelMotor 12
-#define ParOcPulse 13
-#define ParOcFlag 14
+#define ParOCn 8
+#define ParPulsoRede 9
+#define ParPotVal 10
+#define ParSensorFC1 11
+#define ParSensorFC2 12
+#define ParVelMotor 13
+#define ParOcPulse 14
+#define ParOcFlag 15
 
 
 
@@ -290,6 +291,7 @@ void RecebeCmdModbus(void){
  
 if(RxModbus[0]==Mapa[ParEndSensor]){
 
+//beep(1);
   
 CRC16(6,RxModbus);
 
@@ -471,6 +473,7 @@ void GravaMapaDefault(void){
   GravaParam(ParManDig,1);//Manual
   GravaParam(ParPotDigVal,256);//0 a 512  
   GravaParam(ParOcFlagAutClear,1);//1 - Clear Auto 
+  GravaParam(ParOCn,5);
   
   //Zera variaveis de leitura na EEPROM
   for(int j=ENDWRITEMAX+1;j<30;j++)
@@ -501,7 +504,7 @@ void isr_ocprotHandle()
 
   Mapa[ParOcPulse]=(unsigned int)ocPulse;
 
-  if(ocPulse>5)
+  if(ocPulse>Mapa[ParOCn])
   {ocFlag=true;Mapa[ParOcFlag]=1;}
   
 
@@ -601,7 +604,7 @@ double potUpdate()
   byte compVal=0; 
 
   //Controle de potência por potenciômetro ou via digital (ModBus)
-  if(Mapa[ParManDig]==1)
+  if(!Mapa[ParManDig])
   pot=(double)analogRead(0);
   else
   pot=(double)Mapa[ParPotDigVal];
