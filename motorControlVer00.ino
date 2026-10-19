@@ -167,7 +167,7 @@ RxTime++;//Controla tempo entre caracteres Modbus
 Ms++;
 timeStampMs++;
 
-if(timeStampMs>60000)
+if(timeStampMs>6000)
 Mapa[ParVelMotor]=0;
 
   
@@ -470,7 +470,7 @@ void GravaMapaDefault(void){
   GravaParam(ParDelayModbus,10);
   GravaParam(ParCalcVcarga,0);//Vmedia
   GravaParam(ParTriacSW,1);//Ligada
-  GravaParam(ParManDig,1);//Manual
+  GravaParam(ParManDig,0);//Manual
   GravaParam(ParPotDigVal,256);//0 a 512  
   GravaParam(ParOcFlagAutClear,1);//1 - Clear Auto 
   GravaParam(ParOCn,5);
@@ -621,6 +621,8 @@ double potUpdate()
   
   double potPorcento=0;
   potPorcento=pot*100;
+
+  if(!Mapa[ParManDig])
   Mapa[ParPotVal]=(unsigned int)potPorcento;
 
   pot=(double)td;
