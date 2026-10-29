@@ -6,7 +6,7 @@
 #include <avr/interrupt.h>
 #include <avr/io.h>
 #define ENDPADRAO 1
-#define ENDWRITEMAX 8
+#define ENDWRITEMAX 10
 #define SYNC 6
 #define OCPROT A1
 #define BEEP 2
@@ -17,8 +17,10 @@
 #define FC1 5
 #define FC2 7
 #define WP 5
-#define VELMAX 1.0
-#define VELMIN 0.2
+#define VELMAX 512
+#define VELMIN 60
+#define POTVMAX 512
+#define POTVMIN 68
 #define TOPCOUNT 130
 #define MINCOUNT 10
 #define PI 3.1415926535897932384626433832795
@@ -42,13 +44,16 @@
 #define ParPotDigVal 6
 #define ParOcFlagAutClear 7
 #define ParOCn 8
-#define ParPulsoRede 9
-#define ParPotVal 10
-#define ParSensorFC1 11
-#define ParSensorFC2 12
-#define ParVelMotor 13
-#define ParOcPulse 14
-#define ParOcFlag 15
+#define ParVmax 9
+#define ParVmin 10
+#define ParPulsoRede 11
+#define ParPotVal 12
+#define ParSensorFC1 13
+#define ParSensorFC2 14
+#define ParVelMotor 15
+#define ParOcPulse 16
+#define ParOcFlag 17
+
 
 
 
@@ -386,7 +391,7 @@ gravEsp=true;
 if(EndIni==ParPotDigVal)
 {
   gravEsp=true;
-  if(ValueRegister<513)
+  if(ValueRegister<1024)
   {
   Mapa[ParPotDigVal]=ValueRegister;
   GravaParam(ParPotDigVal, ValueRegister);
@@ -474,6 +479,8 @@ void GravaMapaDefault(void){
   GravaParam(ParPotDigVal,256);//0 a 512  
   GravaParam(ParOcFlagAutClear,1);//1 - Clear Auto 
   GravaParam(ParOCn,5);
+  GravaParam(ParVmax,VELMAX);
+  GravaParam(ParVmin,VELMIN);
   
   //Zera variaveis de leitura na EEPROM
   for(int j=ENDWRITEMAX+1;j<30;j++)
@@ -597,19 +604,51 @@ double potUpdate()
 {
 
   double pot=0;
+  double potA=0;
+  double potD=0;
   double aux=0;
   double alpha=0;
   unsigned int td=0;
+  double vmaxcalc=0;
+  double vmincalc=0;
+  double vout=0;
 
   byte compVal=0; 
 
+
+  //Calcula o percentual da posição do potenciômetro
+    aux=analogRead(0);
+    potA=aux-POTVMIN;
+    aux=POTVMAX-POTVMIN;
+    potA/=aux;
+    aux=potA*100;
+    Mapa[ParPotVal]=(unsigned int)aux;
+
+  //Calcula percentual do pot digital
+    if(Mapa[ParPotDigVal]>1023)
+    Mapa[ParPotDigVal]=1023;
+
+    potD=(double)Mapa[ParPotDigVal];
+    potD/=1023;
+
   //Controle de potência por potenciômetro ou via digital (ModBus)
   if(!Mapa[ParManDig])
-  pot=(double)analogRead(0);
+  {
+    pot=potA;
+  }
   else
-  pot=(double)Mapa[ParPotDigVal];
+  {
+    pot=potD;
+  }
+ 
+  
+  //Calcula o relativo para Vmax e Vmin definidos
+  vmaxcalc=(double)Mapa[ParVmax];
+  vmincalc=(double)Mapa[ParVmin];
+  vout=(vmaxcalc-vmincalc)*pot + vmincalc;
+  vout/=1023;
 
-  pot/=512;//Max = 2.5V = 512 - Limite máximo de 90% colocando 612
+  pot=vout;
   
   //Corrige angulo conforme Vrms ou Vmedia
   if(Mapa[ParCalcVcarga]==0)
@@ -619,12 +658,7 @@ double potUpdate()
 
   td = disparoCalc(alpha);
   
-  double potPorcento=0;
-  potPorcento=pot*100;
-
-  if(!Mapa[ParManDig])
-  Mapa[ParPotVal]=(unsigned int)potPorcento;
-
+  //Calcula em funcao do tempo de disparo
   pot=(double)td;
   pot/=TMEIAONDA;
   //Fim da correção
