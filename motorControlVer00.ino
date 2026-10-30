@@ -8,6 +8,7 @@
 #define ENDPADRAO 1
 #define ENDWRITEMAX 10
 #define SYNC 6
+#define RETPOT A2
 #define OCPROT A1
 #define BEEP 2
 #define TXRX 3
@@ -18,11 +19,12 @@
 #define FC2 7
 #define WP 5
 #define VELMAX 512
-#define VELMIN 60
-#define POTVMAX 512
-#define POTVMIN 68
+#define VELMIN 30
+#define POTVMAX 1020
+#define POTVMIN 93
 #define TOPCOUNT 130
 #define MINCOUNT 10
+#define RETCLEARTEMPO 30000
 #define PI 3.1415926535897932384626433832795
 #define VRMSMAX 0.70710678118654752440084436210485
 #define VMEDIAMAX 0.63661990481259183242126921637183
@@ -53,6 +55,7 @@
 #define ParVelMotor 15
 #define ParOcPulse 16
 #define ParOcFlag 17
+#define ParRetFlag 18
 
 
 
@@ -80,12 +83,14 @@ unsigned int PermiteGravar=1;
 
 //Variáveis de tempo
 volatile unsigned long Ms=0;
+unsigned long retFlagClear=0;
 
 //Variaveis Controle de Potencia
 bool syncON = false;
 int nPulse=0;
 int ocPulse=0;
 bool ocFlag=false;
+bool flagRet=false;
 
 //variaveis do sensor de rotacao
 bool rotSensToggle=false;
@@ -112,6 +117,7 @@ void setup() {
   pinMode(MOTOR, OUTPUT);
   pinMode(SYNC,INPUT);
   pinMode(OCPROT,INPUT);
+  pinMode(RETPOT,INPUT);
   pinMode(BEEP,OUTPUT);
   pinMode(TXRX,OUTPUT);
   pinMode(ROTSENS,INPUT);
@@ -123,6 +129,7 @@ void setup() {
 
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(SYNC), isr_syncHandle, FALLING);
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(OCPROT), isr_ocprotHandle, FALLING);
+  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(RETPOT), isr_retpotHandle, RISING);
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(ROTSENS), isr_rotSensHandle, FALLING);
 
   
@@ -171,9 +178,13 @@ ISR(TIMER2_COMPB_vect)
 RxTime++;//Controla tempo entre caracteres Modbus
 Ms++;
 timeStampMs++;
+retFlagClear++;
 
 if(timeStampMs>6000)
 Mapa[ParVelMotor]=0;
+
+if(Mapa[ParRetFlag]&&retFlagClear>RETCLEARTEMPO)
+{Mapa[ParRetFlag]=0;flagRet=false;}
 
   
 }
@@ -398,6 +409,26 @@ if(EndIni==ParPotDigVal)
   }
 }
 
+if(EndIni==ParVmin)
+{
+  gravEsp=true;
+  if(ValueRegister<513)
+  {
+  Mapa[ParVmin]=ValueRegister;
+  GravaParam(ParVmin, ValueRegister);
+  }
+}
+
+if(EndIni==ParVmax)
+{
+  gravEsp=true;
+  if(ValueRegister<1024)
+  {
+  Mapa[ParVmax]=ValueRegister;
+  GravaParam(ParVmax, ValueRegister);
+  }
+}
+
 
 
 if(EndIni==ParDelayModbus)
@@ -490,6 +521,17 @@ void GravaMapaDefault(void){
 
 //########################################  Rotinas de controle de Potencia  
 
+void isr_retpotHandle()
+{
+  if(Mapa[ParManDig])
+  Mapa[ParPotDigVal]=1023;//Retorna na máxima velocidade
+  
+  Mapa[ParRetFlag]=1;
+  flagRet=true;
+
+  retFlagClear=0;//Inicia contagem para limpar flag em RETCLEARTEMPO
+}
+
 void isr_rotSensHandle()
 {
   rotSensToggle^=1;
@@ -569,9 +611,22 @@ void isr_syncHandle()
 
 ISR(TIMER0_COMPA_vect)
 {
+
+  bool potAlto=false;
   
-  if(!ocFlag&&Mapa[ParTriacSW]==1)
-  digitalWrite(MOTOR,1);
+  if(Mapa[ParManDig]&&Mapa[ParPotVal]>20&&!flagRet)
+  {
+  digitalWrite(MOTOR,0);
+  }
+  else
+  {
+
+    if(!ocFlag&&Mapa[ParTriacSW]==1)
+    digitalWrite(MOTOR,1);
+
+  }
+
+    
   
 
 }
