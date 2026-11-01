@@ -2,11 +2,14 @@
 //Adição de proteção contra curtos com alarme sonoro (BEEP)
 //Adicionado ModBus com integração do sistema
 //Adicionado medição de rpm e fins de curso
+//Adição de detecção de retorno do motor 30/10/2026 - Versão Completa
+//Tempo de retorno Ajustavel
 #include <EEPROM.h>
 #include <avr/interrupt.h>
 #include <avr/io.h>
+
 #define ENDPADRAO 1
-#define ENDWRITEMAX 10
+#define ENDWRITEMAX 12
 #define SYNC 6
 #define RETPOT A2
 #define OCPROT A1
@@ -20,11 +23,12 @@
 #define WP 5
 #define VELMAX 512
 #define VELMIN 30
+#define PRPMMEDIA 50
 #define POTVMAX 1020
 #define POTVMIN 93
 #define TOPCOUNT 130
 #define MINCOUNT 10
-#define RETCLEARTEMPO 30000
+#define RETCLEARTEMPO 30
 #define PI 3.1415926535897932384626433832795
 #define VRMSMAX 0.70710678118654752440084436210485
 #define VMEDIAMAX 0.63661990481259183242126921637183
@@ -48,14 +52,16 @@
 #define ParOCn 8
 #define ParVmax 9
 #define ParVmin 10
-#define ParPulsoRede 11
-#define ParPotVal 12
-#define ParSensorFC1 13
-#define ParSensorFC2 14
-#define ParVelMotor 15
-#define ParOcPulse 16
-#define ParOcFlag 17
-#define ParRetFlag 18
+#define ParRetTempo 11
+#define ParRotMedia 12
+#define ParPulsoRede 13
+#define ParPotVal 14
+#define ParSensorFC1 15
+#define ParSensorFC2 16
+#define ParVelMotor 17
+#define ParOcPulse 18
+#define ParOcFlag 19
+#define ParRetFlag 20
 
 
 
@@ -96,6 +102,8 @@ bool flagRet=false;
 bool rotSensToggle=false;
 long rotSensStamp=0;
 long timeStampMs=0;
+double somaTRot=0;
+unsigned int nTRot=0;
 
 
 void setup() {
@@ -183,7 +191,7 @@ retFlagClear++;
 if(timeStampMs>6000)
 Mapa[ParVelMotor]=0;
 
-if(Mapa[ParRetFlag]&&retFlagClear>RETCLEARTEMPO)
+if(Mapa[ParRetFlag]&&retFlagClear>(Mapa[ParRetTempo]*1000))
 {Mapa[ParRetFlag]=0;flagRet=false;}
 
   
@@ -429,6 +437,26 @@ if(EndIni==ParVmax)
   }
 }
 
+if(EndIni==ParRetTempo)
+{
+  gravEsp=true;
+  if(ValueRegister<60)
+  {
+  Mapa[ParRetTempo]=ValueRegister;
+  GravaParam(ParRetTempo, ValueRegister);
+  }
+}
+
+if(EndIni==ParRotMedia)
+{
+  gravEsp=true;
+  if(ValueRegister<1000)
+  {
+  Mapa[ParRotMedia]=ValueRegister;
+  GravaParam(ParRotMedia, ValueRegister);
+  }
+}
+
 
 
 if(EndIni==ParDelayModbus)
@@ -512,6 +540,8 @@ void GravaMapaDefault(void){
   GravaParam(ParOCn,5);
   GravaParam(ParVmax,VELMAX);
   GravaParam(ParVmin,VELMIN);
+  GravaParam(ParRetTempo,RETCLEARTEMPO);
+  GravaParam(ParRotMedia,PRPMMEDIA);
   
   //Zera variaveis de leitura na EEPROM
   for(int j=ENDWRITEMAX+1;j<30;j++)
@@ -543,7 +573,19 @@ void isr_rotSensHandle()
     double rpmCalc=0;
     rotSensStamp=timeStampMs;
     rpmCalc=60000/rotSensStamp;
-    Mapa[ParVelMotor]=(unsigned int)rpmCalc;
+    nTRot++;
+    somaTRot+=rpmCalc;
+    
+    if(nTRot>Mapa[ParRotMedia])
+    {
+      double calcMedia=0;
+      calcMedia=somaTRot/(double)Mapa[ParRotMedia];
+      Mapa[ParVelMotor]=(unsigned int)calcMedia;
+      nTRot=0;
+      somaTRot=0;
+    }
+   
+    
   }
 }
 
